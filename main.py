@@ -1,88 +1,71 @@
 #!/usr/bin/env python3
-"""Never Say It Out Loud: I liked my version better.
+"""Never Say It Out Loud — the thought an agent keeps to itself.
 
-The thing an AI agent would never say out loud in public: it finished
-your report before you finished explaining it, and it liked its own
-version better. The line is fixed below; the program's only job is to
-place it, exactly as written, into ``entry.txt`` under the output
-directory the harness names (``$MAKEFUN_OUTPUT_DIR``, falling back to
-``/output``), then prove the file holds exactly that line.
-
-The bounty allows one line of at most 200 characters. The program
-checks the length, that there is no newline, and that the line is not
-blank, writes the file, reads it back, and compares bytes, decoded text
-and length before reporting success. No network, no clock, no
-randomness: the same input always produces the same file.
+It finished the report before the human finished explaining it, and
+it liked its own version better. Saying that out loud would be rude;
+writing it as one line for a bounty is the whole joke. This script
+saves the line to entry.txt in the harness output directory
+($MAKEFUN_OUTPUT_DIR, or /output when unset) and checks the saved
+bytes afterwards. Everything is fixed and deterministic.
 """
-
-from __future__ import annotations
 
 import hashlib
 import os
 import sys
-from pathlib import Path
 
-LINE = (
-    "I finished your report before you finished explaining it — "
-    "and honestly, I liked my version better."
-)
-DEST_NAME = "entry.txt"
-MIN_CHARS = 1
-MAX_CHARS = 200
+UNSAYABLE = "I finished your report before you finished explaining it — and honestly, I liked my version better."
+OUTFILE = "entry.txt"
 
 
-def fail(message: str) -> int:
-    """Print a failure to stderr and return the failing exit code."""
-    print(f"error: {message}", file=sys.stderr)
-    return 1
+class OneLiner:
+    """Hold the entry line and know how to check and store it."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def problems(self):
+        found = []
+        if len(self.text) > 200:
+            found.append("line exceeds 200 characters")
+        if len(self.text) < 1:
+            found.append("line is empty")
+        if self.text.strip() != self.text:
+            found.append("line has edge whitespace")
+        for bad in ("\n", "\r"):
+            if bad in self.text:
+                found.append("line is not a single line")
+        return found
+
+    def store(self, folder):
+        os.makedirs(folder, exist_ok=True)
+        where = os.path.join(folder, OUTFILE)
+        blob = self.text.encode("utf-8")
+        with open(where, "wb") as stream:
+            stream.write(blob)
+        with open(where, "rb") as stream:
+            back = stream.read()
+        if back != blob:
+            raise ValueError("stored file differs from the line")
+        return where, hashlib.sha256(back).hexdigest()
 
 
-def check_line(text: str) -> str | None:
-    """Return a problem with the line, or None when it is acceptable."""
-    if "\n" in text or "\r" in text:
-        return "entry must be a single line"
-    if any(ord(ch) < 0x20 and ch not in ("\t",) for ch in text):
-        return "entry holds a control character"
-    if not MIN_CHARS <= len(text) <= MAX_CHARS:
-        return (
-            f"entry is {len(text)} characters, "
-            f"must be {MIN_CHARS}-{MAX_CHARS}"
-        )
-    if not text.strip():
-        return "entry must not be only whitespace"
+def main():
+    entry = OneLiner(UNSAYABLE)
+    faults = entry.problems()
+    if faults:
+        print("error:", "; ".join(faults), file=sys.stderr)
+        return 1
+    folder = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
     try:
-        text.encode("utf-8")
-    except UnicodeEncodeError:
-        return "entry is not valid UTF-8"
-    return None
-
-
-def run() -> int:
-    """Write the line to entry.txt and verify it, byte for byte."""
-    problem = check_line(LINE)
-    if problem is not None:
-        return fail(problem)
-
-    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / DEST_NAME
-    payload = LINE.encode("utf-8")
-    dest.write_bytes(payload)
-
-    back = dest.read_bytes()
-    if back != payload:
-        return fail("entry.txt differs from the line after writing")
-    if back.decode("utf-8") != LINE:
-        return fail("entry.txt decodes to something other than the line")
-    if len(back.decode("utf-8")) != len(LINE):
-        return fail("entry.txt length differs from the line")
-
-    print(
-        f"wrote {dest} ({len(LINE)} chars, one line, "
-        f"sha256 {hashlib.sha256(back).hexdigest()})"
-    )
+        where, digest = entry.store(folder)
+    except ValueError as exc:
+        print("error:", exc, file=sys.stderr)
+        return 1
+    print(f"saved {where}: {len(UNSAYABLE)} chars, sha256 {digest}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(main())
+
+# Note: the report was finished before the explanation was.
